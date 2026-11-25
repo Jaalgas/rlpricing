@@ -66,8 +66,7 @@ def run_config(spec, algorithm, index, smoke):
     # Match customer seeds across algorithms. Model seeds are independent of both phases.
     seed_states = np.random.SeedSequence([spec["seed"], index]).generate_state(3)
     model_seed, training_seed, evaluation_seed = map(int, seed_states)
-    market = dict(spec["gym_params"], mode="discrete" if algorithm == "ql" else "continuous",
-                  keep_history=False)
+    market = dict(spec["gym_params"], mode="discrete" if algorithm == "ql" else "continuous")
     return dict(algorithm=algorithm, run=index, package_gb=spec["package_gb"],
                 gym_params=market, model_params=params, model_seed=model_seed,
                 training_seed=training_seed, evaluation_seed=evaluation_seed,
@@ -92,6 +91,8 @@ def execute_run(folder, config):
     if conf.exists():
         previous = read_config(conf)
         status = previous.pop("status")
+        if previous["gym_params"].get("keep_history") is False:
+            del previous["gym_params"]["keep_history"]
         if previous != config:
             raise ValueError("Configuration differs for {}. Use a different --output-dir.".format(folder))
         if status == "completed":
@@ -130,9 +131,8 @@ def execute_run(folder, config):
                     ):
                         raise RuntimeError("SAC smoke test did not update its network")
                 else:
-                    model = QLModel(None, train_env, **config["model_params"])
-                    model.learn(total_timesteps=config["train_timesteps"], log_interval=128,
-                                callback=lambda *_: True)
+                    model = QLModel(train_env, **config["model_params"])
+                    model.learn(total_timesteps=config["train_timesteps"])
                     if config["smoke_test"] and not model.q.losses:
                         raise RuntimeError("Q-learning smoke test did not update its network")
                 model.save(str(artifact))
@@ -148,7 +148,7 @@ def execute_run(folder, config):
         raise
     save_status(conf, config, "completed")
     print("Completed {} (evaluation revenue A {:.2f}, B {:.2f} KZT)".format(
-        folder, env.overall_profits_a, env.overall_profits_b), flush=True)
+        folder, env.total_revenue_a, env.total_revenue_b), flush=True)
 
 
 def main():

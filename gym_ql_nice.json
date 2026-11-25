@@ -1,6 +1,4 @@
 {
-  "model": "ql",
-  "gym_params": {"mode": "discrete"},
   "model_params": {
     "store_type": "prioritized",
     "use_double": true,
@@ -11,20 +9,20 @@
       },
       "hidden_structure": [
         {
-            "units": 128,
-            "activation": "relu",
-            "use_bias": true,
-            "kernel_initializer": "glorot_normal",
-            "bias_initializer": "glorot_normal"
+          "units": 128,
+          "activation": "relu",
+          "use_bias": true,
+          "kernel_initializer": "glorot_normal",
+          "bias_initializer": "glorot_normal"
         }
       ],
       "dueling_hidden_layers": [
         {
-            "units": 128,
-            "activation": "relu",
-            "use_bias": true,
-            "kernel_initializer": "glorot_normal",
-            "bias_initializer": "glorot_normal"
+          "units": 128,
+          "activation": "relu",
+          "use_bias": true,
+          "kernel_initializer": "glorot_normal",
+          "bias_initializer": "glorot_normal"
         }
       ],
       "use_dueling": true

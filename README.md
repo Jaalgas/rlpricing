@@ -4,10 +4,10 @@ The project compares **Q-learning vs Fixed** and **SAC vs Fixed** in a simulated
 
 ## Install and validate
 
-Use 64-bit CPython 3.7. The pinned stack includes TensorFlow 1.15, Stable Baselines 2, Keras 2.2, Gym 0.17, and SciPy 1.7.3. A compatible MPI runtime must be available for the legacy Stable Baselines stack. Run the following commands from the repository root:
+Use 64-bit CPython 3.7. The pinned stack includes TensorFlow 1.15, Stable Baselines 2, Keras 2.2, Gym 0.17, and SciPy 1.7.3. Run the following commands from the repository root:
 
 ~~~sh
-python -m pip install -r requirements-esim.txt
+python -m pip install -r requirements.txt
 python test_market.py
 python run_experiments.py --smoke-test
 python run_analysis.py --input-dir experiments/esim_smoke --output-dir results/esim_smoke
@@ -64,5 +64,3 @@ Each completed run under `experiments/esim/{ql,sac}_vs_fixed/run_NN/` contains:
 | `learning_convergence.png` | Moving average of unscaled training revenue using a common window. |
 | `revenue_boxplot.png` | Testing revenue distributions across runs. |
 | `market_share.png` | Mean share of completed purchases for both providers. |
-
-The original runners, alternative competitor strategies, and legacy benchmark input remain available for reference. The eSIM pipeline analyzes simulated outcomes directly.

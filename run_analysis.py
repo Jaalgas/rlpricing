@@ -92,6 +92,8 @@ def describe(values):
 def pair_key(config):
     market = dict(config["gym_params"])
     market.pop("mode")
+    if market.get("keep_history") is False:
+        del market["keep_history"]
     return (config["run"], config["evaluation_seed"], config["eval_timesteps"],
             config["package_gb"], json.dumps(market, sort_keys=True))
 

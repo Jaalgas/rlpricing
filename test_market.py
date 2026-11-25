@@ -69,8 +69,8 @@ class MarketTests(unittest.TestCase):
         self.assertEqual((row["first_half"]["sales_b"], row["second_half"]["sales_b"]), (5, 13))
         self.assertEqual((row["total_customers"], row["revenue_a"], row["revenue_b"]), (56, 77000, 72000))
         self.assertEqual(reward, row["reward"])
-        self.assertEqual(reward, env.overall_profits_a)
-        self.assertEqual(row["revenue_b"], env.overall_profits_b)
+        self.assertEqual(reward, env.total_revenue_a)
+        self.assertEqual(row["revenue_b"], env.total_revenue_b)
         self.assertTrue(env.observation_space.contains(obs))
         self.assertFalse(done)
 
@@ -83,7 +83,7 @@ class MarketTests(unittest.TestCase):
             self.assertEqual(continuous.step([action])[3]["price_a"], expected)
         discrete = self.market("discrete")
         self.assertEqual(discrete.action_space.n, 91)
-        self.assertEqual([discrete.fix_action(i, 4000) for i in range(91)], list(range(1000, 10001, 100)))
+        self.assertEqual([discrete.decode_action(i) for i in range(91)], list(range(1000, 10001, 100)))
         self.assertEqual(discrete.step(np.int64(90))[3]["price_a"], 10000)
 
     def test_reset_clears_training_history_and_reseeds_evaluation(self):
@@ -92,9 +92,9 @@ class MarketTests(unittest.TestCase):
         training_row = env.step([10])[3]
         np.testing.assert_array_equal(env.reset(seed=16), [4000, 4000])
         self.assertEqual(env.price_a, 4000)
-        self.assertEqual(env.overall_profits_a, 0)
-        self.assertEqual(env.overall_profits_b, 0)
-        self.assertFalse(env.hist_a.sales or env.hist_b.sales or env.customer_arrivals)
+        self.assertEqual(env.total_revenue_a, 0)
+        self.assertEqual(env.total_revenue_b, 0)
+        self.assertEqual(env.steps, 0)
         evaluation_row = env.step([10])[3]
         self.assertEqual(evaluation_row["step"], 1)
         self.assertEqual(evaluation_row["price_b"], 4000)
@@ -102,11 +102,13 @@ class MarketTests(unittest.TestCase):
         env.reset(seed=16)
         self.assertEqual(evaluation_row, env.step([10])[3])
 
-    def test_streaming_mode_keeps_no_step_arrays(self):
-        env = self.market(keep_history=False)
-        _, reward, _, row = env.step([0])
-        self.assertEqual(reward, row["revenue_a"])
-        self.assertFalse(env.hist_a.prices or env.hist_a.sales or env.customer_arrivals)
+    def test_step_records_are_independent(self):
+        env = self.market()
+        _, reward, _, first = env.step([0])
+        _, _, _, second = env.step([0])
+        self.assertEqual(first["reward"], reward)
+        self.assertEqual((first["step"], second["step"]), (1, 2))
+        self.assertEqual(env.total_revenue_a, first["revenue_a"] + second["revenue_a"])
 
 
 class ReplayAndAnalysisTests(unittest.TestCase):

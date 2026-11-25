@@ -108,12 +108,4 @@ venv.bak/
 
 experiments/
 results/
-summarydir/
-
-ampl
-ampl.lic
-minos
-cplex
-infile.csv
-input.txt
-learning_curve_out.txt
+.python37/

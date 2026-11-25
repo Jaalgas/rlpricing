@@ -1,25 +1,7 @@
-import random
 from collections import namedtuple
 import numpy as np
 
 tup = namedtuple("DataTup", ["s", "a", "r", "s2"])
-
-
-class UniformStore(object):
-    def __init__(self, size):
-        self.size = size
-        self.storage = []
-
-    def store(self, s, a, r, s2):
-        self.storage.append(tup(s=s, a=a, r=r, s2=s2))
-        if len(self.storage) > self.size:
-            self.storage.pop(0)
-
-    def get_sample(self, size):
-        return random.choices(self.storage, k=size), np.zeros((size,)), np.ones((size,))
-
-    def update_weights(self, *args, **kwargs):
-        pass
 
 
 class SumTree(object):

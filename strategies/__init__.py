@@ -1,3 +1,5 @@
-from .randomized import FullyRandomStrategy, MixedRandomStrategy
-from .static import TwoBound, Fixed
-from .getstrat import get_strat, STRATEGIES
+class Fixed:
+    """The competitor offers the same KZT price throughout the run."""
+
+    def __init__(self, p):
+        self.price = float(p)

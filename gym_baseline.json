@@ -1,8 +1,0 @@
-{
-  "gym_params": {
-    "mode": "continuous"
-  },
-  "model_params": {},
-  "model": "random",
-  "plot_strats": false
-}
