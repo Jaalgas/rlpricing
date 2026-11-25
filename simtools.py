@@ -2,7 +2,7 @@ import json
 from collections import namedtuple
 
 import numpy as np
-import collections
+from collections.abc import Mapping
 
 
 class CustomerSimulator(object):
@@ -43,7 +43,15 @@ def update_ref(old_ref, price, w=0.9):
     return (old_ref * w) + ((1 - w) * price)
 
 
-def store_history(path, a_profits, b_profits, history_a, history_b, losses=None):
+def price_grid(min_p, max_p, step_size):
+    if step_size <= 0 or max_p <= min_p:
+        raise ValueError("Expected positive price step and increasing market bounds")
+    prices = min_p + np.arange(int(np.ceil((max_p - min_p) / step_size))) * step_size
+    return np.append(prices[prices < max_p], max_p)
+
+
+def store_history(path, a_profits, b_profits, history_a, history_b, losses=None,
+                  no_purchase=None, customer_arrivals=None):
     data = {
         "a_profits": a_profits,
         "b_profits": b_profits,
@@ -51,6 +59,8 @@ def store_history(path, a_profits, b_profits, history_a, history_b, losses=None)
         "b": history_b._asdict(),
         "losses": losses
     }
+    if customer_arrivals is not None:
+        data.update(no_purchase=no_purchase, customer_arrivals=customer_arrivals)
     with open(path, "w") as file:
         json.dump(data, file)
 
@@ -65,7 +75,7 @@ def store_oligopoly_history(path, histories):
 
 def update(d, u):
     for k, v in u.items():
-        if isinstance(v, collections.Mapping):
+        if isinstance(v, Mapping):
             d[k] = update(d.get(k, {}), v)
         else:
             d[k] = v

@@ -1,4 +1,6 @@
 {
+  "model": "ql",
+  "gym_params": {"mode": "discrete"},
   "model_params": {
     "store_type": "prioritized",
     "use_double": true,

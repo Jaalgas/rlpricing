@@ -1,198 +1,149 @@
+"""Summarize actual testing outcomes from completed eSIM runs."""
+import argparse
 import csv
 import json
-import subprocess
+from pathlib import Path
+from statistics import mean, median, stdev
 import sys
-import os
-import warnings
-from shutil import copyfile
-import numpy as np
-from matplotlib import pyplot as plt
 
-PLOT_PERF_ANALYSIS = True
-COMPUTE_STRAT_COMPLEXITY = False
-NO_CACHE = False
-# Write our source file to the correct position for ampl to use
-def read_file(target_file):
-    chunk = 100 if target_file.endswith("_early.csv") else 1000
-
-    dir = os.path.dirname(target_file)
-    conf_file = os.path.join(dir, "conf.json")
-    with open(conf_file, "r") as conf:
-        cont = json.load(conf)
-        num_exp = cont["num_experiments"]
-        max_epi = cont["train_timesteps"] // chunk - 1
-
-    if target_file.endswith("_merged.csv"):
-        num_exp = 10
-
-    if target_file.endswith("_early.csv"):
-        max_epi = 100
-
-    print("Copying source file {}".format(target_file))
-    if os.path.isfile("infile.csv"):
-        os.remove("infile.csv")
-    copyfile(target_file, "infile.csv")
-    print("Done")
-
-    print("Transforming infile.csv to input.txt")
-    if os.path.isfile("input.txt"):
-        os.remove("input.txt")
-    strategy_store = np.zeros(shape=(num_exp, max_epi, 50))
-    cache_file = target_file + ".npy"
-    with open("infile.csv", "r") as infile, open("input.txt", "w+") as outfile:
-        outfile.writelines([
-            "param dl := {};\n".format(num_exp),
-            "param epi := {};\n".format(max_epi * chunk),
-            "param chunk := {};\n".format(chunk),
-            "param input: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 :=\n",
-        ])
-
-        i = 1
-        for line in infile.readlines():
-            outfile.write(str(i) + " " + line)
-            content = [float(x) for x in line.split(" ")]
-            exp_num = int(content[0])
-            epi = int(content[1]/chunk) - 1
-            strategy_store[exp_num][epi] = content[2:]
-            i += 1
-
-        outfile.write(";")
-
-        print("Done")
-    # Launch ampl, import command
-    if PLOT_PERF_ANALYSIS:
-        if os.path.isfile(cache_file) and not NO_CACHE:
-            print("Cache file found, using it")
-            result_out = np.load(cache_file)
-            max_out = np.load(os.path.join(dir, "maxout.npy"))[0]
-        else:
-            print("Launching ampl")
-            proc = subprocess.Popen(["./ampl"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-            out = proc.communicate(input=b'include "evaluate_strategy.txt"; \n')
-            print("Done")
-            proc.kill()
-            print("Results")
-            out = out[0].decode()
-            out = out.split("\n")
-            last_solver_output = next(i for i in reversed(range(len(out))) if out[i].startswith("MINOS"))
-            end_pos = last_solver_output - len(out)
-            result_out = out[(end_pos - max_epi):end_pos]
-            max_out = float(out[-3][12:])
-            print("\n".join(result_out))
-            print("Max val {}".format(max_out))
-            result_out = np.array([[float(el) for el in line.split(" ") if el != ""] for line in result_out])
-            np.save(cache_file, result_out)
-            np.save(os.path.join(dir, "maxout.npy"), np.asarray([max_out]))
-        steps = result_out[:, 0]
-        result_out = result_out[:, 1:]
-
-        print("Done loading source file {}".format(target_file))
-        return result_out, result_out / max_out, max_out, steps, strategy_store
-    else:
-        print("Skipping AMPL")
-        return None, None, None, None, strategy_store
-
-PLOT_COLORS = ["#CC4F1B", "#7167FF", "#80477B", "#14FFAD"]
-PLOT_SHADOW_COLORS = ['#FF9848', "#B8B3FF", "#FF8FF6", "#14FFAD"]
-PLOT_SHADOW_BORDER_COLORS = PLOT_COLORS
+from scipy.stats import t
 
 
-def plot_relative_performance(steps, outputs, labels, plot_shadows=True, filename=None):
-
-    lens = [len(s) for s in steps]
-    shortest = np.argmin(lens)
-    steps = steps[shortest]
-    outputs = [o[:len(steps)] for o in outputs]
-
-    plt.figure(figsize=(8, 4), dpi=200)
-    for i, o in enumerate(outputs):
-        mean_results = np.median(o, axis=1)
-        upper_quantile = np.quantile(o, .8, axis=1)
-        lower_quantile = np.quantile(o, .2, axis=1)
-        plt.plot(steps, mean_results, 'k', color=PLOT_COLORS[i % len(PLOT_COLORS)], label="{}".format(labels[i]))
-        if plot_shadows:
-            plt.fill_between(steps, upper_quantile, lower_quantile,
-                alpha=0.5, edgecolor=PLOT_SHADOW_BORDER_COLORS[i % len(PLOT_SHADOW_BORDER_COLORS)], facecolor=PLOT_SHADOW_COLORS[i % len(PLOT_SHADOW_COLORS)])
-
-    axes = plt.gca()
-    axes.set_ylim([0, 1])
-    axes.set_xlabel("Episode")
-    axes.set_ylabel("Normalized strategy value")
-    if len(outputs) > 1:
-        plt.legend()
-    if filename is None:
-        plt.show()
-    else:
-        plt.savefig(filename)
+ALGORITHMS = ("ql", "sac")
+METRICS = ("revenue_a", "revenue_b", "revenue_difference", "revenue_advantage_pct",
+           "sales_a", "sales_b", "no_purchase", "total_customers",
+           "market_share_a_pct", "market_share_b_pct", "conversion_rate_pct",
+           "average_price_a", "average_price_b", "win")
+TOTALS = ("revenue_a", "revenue_b", "sales_a", "sales_b", "no_purchase", "total_customers")
 
 
-print("Loading starts")
-overall_steps = []
-overall_max_out = None
-results = []
-relative_results = []
-strategy_results = []
+def completed_runs(root):
+    for algorithm in ALGORITHMS:
+        for folder in sorted((root / (algorithm + "_vs_fixed")).glob("run_*")):
+            conf = folder / "conf.json"
+            if not conf.is_file():
+                continue
+            config = json.loads(conf.read_text(encoding="utf-8"))
+            if config.get("status") == "completed":
+                if not (folder / "eval_history.jsonl").is_file():
+                    print("Skipping {}: evaluation history is missing.".format(folder), file=sys.stderr)
+                    continue
+                yield folder, config
 
-##############################################
-# Configure script here
-##############################################
 
-# Strategy files to load
-files = []
-for f in files:
-    result_out, relative_out, max_out, steps, strategies = read_file(f)
-    results.append(result_out)
-    relative_results.append(relative_out)
-    strategy_results.append(strategies)
-    overall_steps.append(steps)
+def history(path, expected_steps):
+    count = 0
+    with path.open(encoding="utf-8") as source:
+        for count, line in enumerate(source, 1):
+            row = json.loads(line)
+            if row["step"] != count:
+                raise ValueError("{} has nonconsecutive steps at line {}".format(path, count))
+            yield row
+    if count != expected_steps:
+        raise ValueError("{} has {} rows, expected {}".format(path, count, expected_steps))
 
-# Tuples with indices that should be plotted
-combos = []
 
-# Labels for each tuple
-combo_labels = []
+def ratio(numerator, denominator, scale=1):
+    return scale * numerator / denominator if denominator else None
 
-# Filenames to store resulting plots
-combo_filenames = []
-combo_filenames = [os.path.join("./imageout/", f) for f in combo_filenames]
 
-# Labels for the complexity plot
-complexity_labels = []
-if PLOT_PERF_ANALYSIS:
-    print("Analyze perf history")
-    for i, c in enumerate(combos):
-        plot_relative_performance([overall_steps[idx] for idx in c], [relative_results[idx] for idx in c], combo_labels[i], filename=combo_filenames[i])
-    print("Finally done, writing results")
+def evaluation_metrics(rows, config):
+    totals = dict.fromkeys(TOTALS, 0)
+    for row in rows:
+        for metric in totals:
+            totals[metric] += row[metric]
+    a, b = totals["revenue_a"], totals["revenue_b"]
+    sold = totals["sales_a"] + totals["sales_b"]
+    return dict(
+        algorithm=config["algorithm"], run=config["run"], evaluation_seed=config["evaluation_seed"],
+        eval_steps=config["eval_timesteps"], **totals, revenue_difference=a-b,
+        revenue_advantage_pct=ratio(a-b, b, 100),
+        market_share_a_pct=ratio(totals["sales_a"], sold, 100),
+        market_share_b_pct=ratio(totals["sales_b"], sold, 100),
+        conversion_rate_pct=ratio(sold, totals["total_customers"], 100),
+        average_price_a=ratio(a, totals["sales_a"]),
+        average_price_b=ratio(b, totals["sales_b"]), win=int(a > b))
 
-    for i, res in enumerate(relative_results):
-        opt = np.max(res)
-        amax = np.unravel_index(np.argmax(res), res.shape)
 
-        print("Run {}, max perf of {} reached in {}".format(files[i], opt, str(amax)))
+def collect_results(root):
+    for folder, config in completed_runs(root):
+        try:
+            metrics = evaluation_metrics(
+                history(folder / "eval_history.jsonl", config["eval_timesteps"]), config)
+        except (ValueError, KeyError) as error:
+            print("Skipping {}: {}".format(folder, error), file=sys.stderr)
+            continue
+        yield folder, config, metrics
 
-if COMPUTE_STRAT_COMPLEXITY:
-    print("Analyze strategy complexity")
-    strat_complexity_stat = np.zeros(shape=(len(strategy_results),) + strategy_results[0].shape[:-1])
-    for i in range(len(strategy_results)):
-        for num_exp in range(len(strategy_results[i])):
-            for epi in range(len(strategy_results[i][num_exp])):
-                strat_complexity_stat[i][num_exp][epi] = len(np.unique(strategy_results[i][num_exp][epi]))
 
-    y_range = list(range(1, 11))
-    strat_complexity_counter = np.zeros((len(strategy_results), 10))
-    for i in range(len(strat_complexity_stat)):
-        result = np.unique(strat_complexity_stat[i], return_counts=True)
-        for complexity, count in zip(*result):
-            complexity = int(complexity) - 1
-            if complexity <= len(strat_complexity_counter) - 2:
-                strat_complexity_counter[i][complexity] = count
+def describe(values):
+    values = [value for value in values if value is not None]
+    n = len(values)
+    if not n:
+        return dict(n=0, mean=None, sd=None, median=None, ci95_low=None, ci95_high=None)
+    center = mean(values)
+    spread = stdev(values) if n > 1 else None
+    margin = t.ppf(0.975, n-1) * spread / n**0.5 if spread is not None else None
+    return dict(n=n, mean=center, sd=spread, median=median(values),
+                ci95_low=center-margin if margin is not None else None,
+                ci95_high=center+margin if margin is not None else None)
+
+
+def pair_key(config):
+    market = dict(config["gym_params"])
+    market.pop("mode")
+    return (config["run"], config["evaluation_seed"], config["eval_timesteps"],
+            config["package_gb"], json.dumps(market, sort_keys=True))
+
+
+def summarize(results):
+    for algorithm in ALGORITHMS:
+        runs = [row for _, _, row in results if row["algorithm"] == algorithm]
+        if not runs:
+            continue
+        for metric in METRICS:
+            if metric == "win":
+                wins = [row["win"] for row in runs]
+                yield dict(comparison=algorithm + "_vs_fixed", metric="win_rate_pct",
+                           n=len(wins), mean=100 * mean(wins))
             else:
-                strat_complexity_counter[i][-1] += count
-        plt.plot(y_range, strat_complexity_counter[i], label=complexity_labels[i])
+                yield dict(comparison=algorithm + "_vs_fixed", metric=metric,
+                           **describe(row[metric] for row in runs))
 
-    plt.legend()
-    plt.show()
+    ql = {pair_key(conf): row for _, conf, row in results if conf["algorithm"] == "ql"}
+    sac = {pair_key(conf): row for _, conf, row in results if conf["algorithm"] == "sac"}
+    pairs = [(sac[key], ql[key]) for key in sorted(sac.keys() & ql.keys())]
+    if pairs:
+        for metric in ("revenue_a", "revenue_difference", "revenue_advantage_pct"):
+            differences = (left[metric] - right[metric] for left, right in pairs
+                           if left[metric] is not None and right[metric] is not None)
+            yield dict(comparison="matched_sac_minus_ql", metric=metric, **describe(differences))
 
-    np.savetxt("./remotexperiments/complexity_analysis.csv", np.concatenate([np.asarray([complexity_labels], dtype=np.str).T, strat_complexity_counter], axis=1), fmt="%s", delimiter=",")
 
-print("Donedonedone")
+def write_csv(path, fields, rows):
+    with path.open("w", encoding="utf-8", newline="") as output:
+        writer = csv.DictWriter(output, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input-dir", type=Path, default=Path("experiments/esim"))
+    parser.add_argument("--output-dir", type=Path, default=Path("results"))
+    args = parser.parse_args()
+    results = list(collect_results(args.input_dir))
+    if not results:
+        parser.error("No completed evaluation runs found in {}".format(args.input_dir))
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    write_csv(args.output_dir / "individual_runs.csv",
+              ("algorithm", "run", "evaluation_seed", "eval_steps") + METRICS,
+              (row for _, _, row in results))
+    write_csv(args.output_dir / "evaluation_summary.csv",
+              ("comparison", "metric", "n", "mean", "sd", "median", "ci95_low", "ci95_high"),
+              summarize(results))
+    print("Summarized {} completed evaluation runs in {}".format(len(results), args.output_dir))
+
+
+if __name__ == "__main__":
+    main()

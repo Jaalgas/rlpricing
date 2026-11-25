@@ -1,4 +1,5 @@
 {
+  "model": "ql",
   "gym_params": {
     "mode": "discrete_relative"
   },

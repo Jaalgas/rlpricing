@@ -5,6 +5,7 @@ tensorflow==1.15.0
 keras==2.2.4
 tflearn==0.3.2
 numpy==1.18.5
+scipy==1.7.3
 matplotlib==3.3.4
 psutil==5.9.8
 mpi4py==3.1.6

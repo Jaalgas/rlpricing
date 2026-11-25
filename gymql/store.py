@@ -27,9 +27,8 @@ class SumTree(object):
     This SumTree code is a modified version of:
     https://github.com/MorvanZhou/Reinforcement-learning-with-tensorflow/blob/master/experiments/Solve_LunarLander/DuelingDQNPrioritizedReplay.py
     """
-    data_pointer = 0
-
     def __init__(self, capacity):
+        self.data_pointer = 0
         self.capacity = capacity  # for all priority values
         self.tree = np.zeros(2 * capacity - 1)
         # [--------------Parent nodes-------------][-------leaves to recode priority-------]
@@ -51,7 +50,8 @@ class SumTree(object):
         change = p - self.tree[tree_idx]
 
         self.tree[tree_idx] = p
-        self._propagate_change(tree_idx, change)
+        if tree_idx:
+            self._propagate_change(tree_idx, change)
 
     def _propagate_change(self, tree_idx, change):
         """change the sum of priority value in all parent nodes"""
@@ -83,9 +83,7 @@ class SumTree(object):
         if left_child_idx >= len(self.tree):  # end search when no more child
             return parent_idx
 
-        if self.tree[left_child_idx] == self.tree[right_child_idx]:
-            return self._retrieve(lower_bound, np.random.choice([left_child_idx, right_child_idx]))
-        if lower_bound <= self.tree[left_child_idx]:  # downward search, always search for a higher priority node
+        if lower_bound < self.tree[left_child_idx]:  # downward search, always search for a higher priority node
             return self._retrieve(lower_bound, left_child_idx)
         else:
             return self._retrieve(lower_bound - self.tree[left_child_idx], right_child_idx)
@@ -111,9 +109,8 @@ class PrioritizedStore(object):
         self.tree = SumTree(size)
 
     def store(self, s, a, r, s2):
-        error = np.max(self.tree.tree[-self.tree.capacity:])
-        p = self._get_priority(error)
-        self.tree.add_new_priority(p, tup(s=s, a=a, r=r, s2=s2))
+        priority = np.max(self.tree.tree[-self.tree.capacity:]) or 1.0
+        self.tree.add_new_priority(priority, tup(s=s, a=a, r=r, s2=s2))
 
     def get_sample(self, n):
         batch_idx, batch_memory, ISWeights = [], [], []

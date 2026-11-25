@@ -1,0 +1,191 @@
+"""Run the two fixed-competitor eSIM experiments."""
+import argparse
+import json
+from pathlib import Path
+import random
+
+import gym
+import numpy as np
+import tensorflow as tf
+from stable_baselines import SAC
+from stable_baselines.common.vec_env import DummyVecEnv
+from stable_baselines.sac import MlpPolicy
+
+from environments.duopoly import MarketEnv
+from gymql.strategy import QLModel
+from simtools import update
+
+
+ROOT = Path(__file__).resolve().parent
+PRESETS = {"ql": "gym_ql_nice.json", "sac": "gym_sac.json"}
+MODELS = {"ql": "trained_model.weights.h5", "sac": "trained_model.zip"}
+
+
+class RecordedMarket(gym.Wrapper):
+    def __init__(self, env, history, reward_scale=1, normalize=False):
+        super().__init__(env)
+        self.history = history
+        self.reward_scale = reward_scale
+        self.normalize = normalize
+        if normalize:
+            self.observation_space = gym.spaces.Box(-0.5, 0.5, shape=env.observation_space.shape,
+                                                    dtype=np.float32)
+
+    def observation(self, obs):
+        if self.normalize:
+            low = self.env.observation_space.low
+            high = self.env.observation_space.high
+            return (obs - low) / (high - low) - 0.5
+        return obs
+
+    def reset(self, **kwargs):
+        return self.observation(self.env.reset(**kwargs))
+
+    def step(self, action):
+        obs, revenue, done, record = self.env.step(action)
+        self.history.write(json.dumps(record, separators=(",", ":"), allow_nan=False) + "\n")
+        return self.observation(obs), revenue / self.reward_scale, done, record
+
+
+def read_config(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def run_config(spec, algorithm, index, smoke):
+    params = read_config(ROOT / PRESETS[algorithm])["model_params"]
+    update(params, spec["model_params"])
+    if algorithm == "ql":
+        params["store_params"] = {"size": spec["ql_replay_capacity"]}
+        if smoke:
+            params["store_params"]["size"] = 16
+            params["sample_size"] = 33  # Exercise a final minibatch of one transition.
+            params["training_eps"] = 16
+        elif spec["train_timesteps"] <= spec["ql_replay_capacity"]:
+            # A shortened run needs time to update after filling its replay buffer.
+            params["store_params"]["size"] = max(1, spec["train_timesteps"] // 2)
+    # Match customer seeds across algorithms. Model seeds are independent of both phases.
+    seed_states = np.random.SeedSequence([spec["seed"], index]).generate_state(3)
+    model_seed, training_seed, evaluation_seed = map(int, seed_states)
+    market = dict(spec["gym_params"], mode="discrete" if algorithm == "ql" else "continuous",
+                  keep_history=False)
+    return dict(algorithm=algorithm, run=index, package_gb=spec["package_gb"],
+                gym_params=market, model_params=params, model_seed=model_seed,
+                training_seed=training_seed, evaluation_seed=evaluation_seed,
+                train_timesteps=spec["train_timesteps"], eval_timesteps=spec["eval_timesteps"],
+                sac_reward_scale=spec["sac_reward_scale"] if algorithm == "sac" else 1,
+                smoke_test=smoke)
+
+
+def save_status(path, config, status):
+    temp = path.with_suffix(".tmp")
+    temp.write_text(json.dumps(dict(config, status=status), indent=2), encoding="utf-8")
+    temp.replace(path)
+
+
+def execute_run(folder, config):
+    algorithm = config["algorithm"]
+    artifact = folder / MODELS[algorithm]
+    conf = folder / "conf.json"
+    train_history = folder / "train_history.jsonl"
+    eval_history = folder / "eval_history.jsonl"
+    folder.mkdir(parents=True, exist_ok=True)
+    if conf.exists():
+        previous = read_config(conf)
+        status = previous.pop("status")
+        if previous != config:
+            raise ValueError("Configuration differs for {}. Use a different --output-dir.".format(folder))
+        if status == "completed":
+            missing = [p.name for p in (artifact, train_history, eval_history) if not p.is_file()]
+            if missing:
+                raise ValueError("Completed run {} is missing {}".format(folder, ", ".join(missing)))
+            print("Skipping completed {}".format(folder), flush=True)
+            return
+    save_status(conf, config, "running")
+    if algorithm == "ql":
+        print("Q-learning replay capacity: {}".format(config["model_params"]["store_params"]["size"]), flush=True)
+    market_params = dict(config["gym_params"])
+    market_params["sim_params"] = dict(market_params["sim_params"], seed=config["training_seed"])
+    seed = config["model_seed"]
+    sac = algorithm == "sac"
+    try:
+        env = MarketEnv(**market_params)
+        if env.sim.cap != config["package_gb"]:
+            raise ValueError("The configured package must match the customer model capacity")
+        with tf.Graph().as_default(), tf.Session():
+            random.seed(seed)
+            np.random.seed(seed)
+            tf.set_random_seed(seed)
+            env.action_space.seed(seed)
+            with train_history.open("w", encoding="utf-8") as output:
+                train_env = DummyVecEnv([lambda: RecordedMarket(
+                    env, output, config["sac_reward_scale"], normalize=sac)])
+                if sac:
+                    model = SAC(MlpPolicy, train_env, seed=seed, **config["model_params"])
+                    if config["smoke_test"]:
+                        initial_weights = model.get_parameters()
+                    model.learn(total_timesteps=config["train_timesteps"])
+                    if config["smoke_test"] and all(
+                        np.array_equal(value, initial_weights[key])
+                        for key, value in model.get_parameters().items()
+                    ):
+                        raise RuntimeError("SAC smoke test did not update its network")
+                else:
+                    model = QLModel(None, train_env, **config["model_params"])
+                    model.learn(total_timesteps=config["train_timesteps"], log_interval=128,
+                                callback=lambda *_: True)
+                    if config["smoke_test"] and not model.q.losses:
+                        raise RuntimeError("Q-learning smoke test did not update its network")
+                model.save(str(artifact))
+
+            with eval_history.open("w", encoding="utf-8") as output:
+                test_env = RecordedMarket(env, output, normalize=sac)
+                obs = test_env.reset(seed=config["evaluation_seed"])
+                for _ in range(config["eval_timesteps"]):
+                    action, _ = model.predict(obs[None, :], deterministic=True) if sac else model.predict(obs)
+                    obs, _, _, _ = test_env.step(action)
+    except BaseException:
+        save_status(conf, config, "incomplete")
+        raise
+    save_status(conf, config, "completed")
+    print("Completed {} (evaluation revenue A {:.2f}, B {:.2f} KZT)".format(
+        folder, env.overall_profits_a, env.overall_profits_b), flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, default=ROOT / "gym_esim.json")
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--algorithm", choices=tuple(PRESETS))
+    parser.add_argument("--train-steps", type=int)
+    parser.add_argument("--eval-steps", type=int)
+    parser.add_argument("--runs", type=int)
+    parser.add_argument("--smoke-test", action="store_true")
+    args = parser.parse_args()
+    spec = read_config(args.config)
+    market = spec["gym_params"]
+    if spec["algorithms"] != ["ql", "sac"] or market["competitor"] != "fixed":
+        parser.error("This pipeline supports Q-learning and SAC against fixed pricing.")
+    fixed = market["comp_params"]["p"]
+    if fixed != market["initial_price_b"] or not market["min_p"] <= fixed <= market["max_p"]:
+        parser.error("The fixed competitor price must match its opening price and be within market bounds.")
+    if args.smoke_test:
+        spec.update(train_timesteps=160, eval_timesteps=20, num_experiments=1)
+    for flag, key in (("train_steps", "train_timesteps"), ("eval_steps", "eval_timesteps"),
+                      ("runs", "num_experiments")):
+        value = getattr(args, flag)
+        if value is not None:
+            spec[key] = value
+        if spec[key] < 1:
+            parser.error("{} must be positive".format(key))
+    if spec["ql_replay_capacity"] < 1 or spec["sac_reward_scale"] <= 0:
+        parser.error("Replay capacity and reward scale must be positive.")
+    root = args.output_dir or Path("experiments/esim_smoke" if args.smoke_test else "experiments/esim")
+    algorithms = [args.algorithm] if args.algorithm else spec["algorithms"]
+    for algorithm in algorithms:
+        for index in range(spec["num_experiments"]):
+            execute_run(root / (algorithm + "_vs_fixed") / "run_{:02d}".format(index),
+                        run_config(spec, algorithm, index, args.smoke_test))
+
+
+if __name__ == "__main__":
+    main()

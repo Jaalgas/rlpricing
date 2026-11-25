@@ -1,6 +1,10 @@
 {
   "gym_type": "oligopoly",
   "gym_params": {
+    "min_p": 1,
+    "max_p": 50,
+    "step_size": 1,
+    "initial_reference_price": 30,
     "agent_intervall": 1.0,
     "time_stddev": 0.2,
     "comp_params": [

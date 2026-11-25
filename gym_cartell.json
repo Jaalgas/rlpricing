@@ -2,10 +2,10 @@
   "gym_params": {
     "competitor": "cartel",
     "comp_params": {
-      "min_p": 1,
-      "max_p": 50,
-      "cartel_p": 33,
-      "diff": 1
+      "min_p": 1000,
+      "max_p": 10000,
+      "cartel_p": 6600,
+      "diff": 100
     }
   }
 }

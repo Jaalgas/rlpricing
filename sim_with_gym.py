@@ -1,4 +1,3 @@
-import collections
 import csv
 import datetime
 import json
@@ -16,17 +15,9 @@ from stable_baselines.sac import MlpPolicy
 
 from environments.oligopoly import OligopolyEnv
 from randommodel import RandomModel
-from simtools import update
+from simtools import price_grid, update
 from environments.duopoly import MarketEnv
 from gymql.strategy import QLModel
-
-def update_dict(d, u):
-    for k, v in u.items():
-        if isinstance(v, collections.abc.Mapping):
-            d[k] = update(d.get(k, {}), v)
-        else:
-            d[k] = v
-    return d
 
 if len(sys.argv) > 1:
     files = sys.argv[1:]
@@ -39,12 +30,12 @@ spec = {}
 for file in files:
     with open(file) as json_file:
         loaded = json.load(json_file)
-        update_dict(spec, loaded)
+        update(spec, loaded)
 
 start_time = datetime.datetime.now()
 start_time_s = start_time.strftime("%Y-%m-%d_%H-%M-%S")
 exp_name = files[-1][:-5] + "_" + format(start_time_s)
-os.mkdir("./experiments/{}".format(exp_name))
+os.makedirs("./experiments/{}".format(exp_name))
 
 pid = os.getpid()
 py = psutil.Process(pid)
@@ -73,35 +64,38 @@ with open("./experiments/{}/strategies.csv".format(exp_name), "w+") as strat_fil
         open("./experiments/{}/strategies_early.csv".format(exp_name), "w+") as early_strat_file:
     def get_strategy(m, ref):
         data = []
-        for p in range(1, 51):
-            obs = np.asarray([[ref, p]])
-            if spec["gym_type"] != "duopoly":
-                obs = np.ones((1, len(spec["gym_params"]["comp_params"]))) * ref
-                obs[0] = p
-            data.append(orig_env.fix_action(m.predict(obs)[0][0][0], p))
+        for p in prices:
+            if spec["gym_type"] == "duopoly":
+                obs = np.asarray([[ref, p]], dtype=np.float32)
+            else:
+                obs = np.full((1, orig_env.observation_space.shape[0]), p, dtype=np.float32)
+            data.append(orig_env.fix_action(np.asarray(m.predict(obs)[0]).item(), p))
         return data
 
     def plot_strategy(data, ref):
-        plt.plot(range(1, 51), data, label="{}".format(ref))
+        plt.plot(prices, data, label="{}".format(ref))
 
 
     strat_writer = csv.writer(strat_file, delimiter=" ")
     early_strat_writer = csv.writer(early_strat_file, delimiter=" ")
+    params = spec["gym_params"]
+    prices = price_grid(params["min_p"], params["max_p"], params["step_size"])
+    ref = params["initial_reference_price"]
     losses = []
 
 
     def callback(local_vars, global_vars):
         global losses
         if local_vars['step'] % 100 == 0 and 0 < local_vars['step'] <= 10000:
-            strat = get_strategy(model, 30)
+            strat = get_strategy(model, ref)
             early_strat_writer.writerow([exp_num, local_vars['step']] + strat)
             early_strat_file.flush()
 
         if local_vars['step'] % 1000 == 0 and local_vars['step'] > 0:
             print("Storing intermediate strategy for exp. {} step {}".format(exp_num, local_vars['step']))
-            strat = get_strategy(model, 30)
+            strat = get_strategy(model, ref)
             if spec["plot_strats"]:
-                plot_strategy(strat, 30)
+                plot_strategy(strat, ref)
                 plt.legend()
                 plt.savefig("./experiments/{}/predictions_{}_{}.png".format(exp_name, exp_num, local_vars['step']))
                 plt.close()
@@ -119,7 +113,8 @@ with open("./experiments/{}/strategies.csv".format(exp_name), "w+") as strat_fil
         json.dump(spec, f, indent=2)
 
     for exp_num in range(0, spec["num_experiments"]):
-        with tf.Session() as sess:
+        losses = []
+        with tf.Graph().as_default(), tf.Session():
             orig_env = env_cls(**spec["gym_params"])
             env = DummyVecEnv([lambda: orig_env])
 

@@ -139,7 +139,7 @@ class KerasQNetwork(object):
         self.model = model
 
     def fit_to(self, inputs, target_q, weights, masks):
-        return self.model.train_on_batch(inputs, target_q), np.zeros((len(inputs),))
+        return self.model.train_on_batch(inputs, target_q, sample_weight=weights)
 
     def predict(self, inputs):
         predictions = self.model.predict(inputs)
@@ -248,11 +248,11 @@ class TFQNetwork(object):
             self.loss_weights: weights.reshape((-1, 1)),
             self.mask: masks
         })
-        return ret_val[1:]
+        return ret_val[1]
 
     def predict(self, inputs):
         return self.session.run([self.output], feed_dict={
-            self.input: inputs.reshape((1, -1))
+            self.input: np.atleast_2d(inputs)
         })[0]
 
     def copy_from(self, network):
@@ -274,7 +274,7 @@ class QLModel(object):
 
     def __init__(self, num_inputs, num_outputs,
                  log=None, eps=EPS, decay=DECAY, min_eps=MIN_EPS, network_params=None, use_double=USE_DOUBLE, gamma=GAMMA,
-                 use_relative=False, network_backend="keras", *args, **kwargs):
+                 use_relative=False, network_backend="keras", *args, relative_action_index=None, **kwargs):
         self.network_params = network_params or {}
         self.num_inputs = num_inputs
         self.num_outputs = num_outputs
@@ -293,6 +293,7 @@ class QLModel(object):
         self.decay = decay
         self.min_eps = min_eps
         self.use_relative = use_relative
+        self.relative_action_index = relative_action_index
 
         self.losses = []
 
@@ -342,13 +343,12 @@ class QLModel(object):
         batch_x = np.zeros((BATCH_SIZE, self.num_inputs))
         batch_y = np.zeros((BATCH_SIZE, self.num_outputs))
         batch_weights = np.zeros((BATCH_SIZE,))
-        batch_indexes = np.zeros((BATCH_SIZE,), dtype=np.int32)
         batch_masks = np.zeros((BATCH_SIZE, self.num_outputs))
         loss_updates = np.zeros(len(tuples))
         i = 0
         for idx in indexes:
             tup = tuples[idx]
-            weight = weights[idx]
+            weight = float(np.asarray(weights[idx]).item())
 
             # Find predicted values
             chose, predicted = self.predict_values(
@@ -368,37 +368,30 @@ class QLModel(object):
             pos = tup.a
 
             # Rewrite this value with the actual result value.
-            predicted[pos] = self.normalize_reward(tup.r) + \
-                             (self.gamma * next_predicted[next_chose])
+            target_value = self.normalize_reward(tup.r) + self.gamma * next_predicted[next_chose]
+            loss_updates[idx] = abs(target_value - predicted[pos])
+            predicted[pos] = target_value
 
             batch_masks[i][pos] = 1
 
             # If we have a relative action in the end and it was used, update the corresponding absolute action as well
-            opp_relative = int((tup.s[0][1] + 0.5) * self.num_outputs) - 2
-            if self.use_relative and (pos == self.num_outputs - 1) and opp_relative >= 0:
-                predicted[opp_relative] = predicted[pos]
-                batch_masks[i][opp_relative] = 1
+            if self.use_relative and pos == self.num_outputs - 1 and self.relative_action_index:
+                absolute_action = self.relative_action_index(tup.s)
+                predicted[absolute_action] = predicted[pos]
+                batch_masks[i][absolute_action] = 1
 
             batch_x[i] = tup.s[0]
             batch_y[i] = predicted
             batch_weights[i] = weight
-            batch_indexes[i] = idx
 
             i += 1
 
             if i == BATCH_SIZE:
-                loss, loss_per_tuple = self.fit_to(batch_x, batch_y, batch_weights, batch_masks)
-                losses.append(loss)
-                for j, l in enumerate(loss_per_tuple):
-                    loss_updates[batch_indexes[j]] = l
+                losses.append(self.fit_to(batch_x, batch_y, batch_weights, batch_masks))
                 i = 0
 
         if i > 0:
-            i -= 1
-            loss, loss_per_tuple = self.fit_to(batch_x[:i], batch_y[:i], batch_weights[:i], batch_masks[:i])
-            losses.append(loss)
-            for i, l in enumerate(loss_per_tuple):
-                loss_updates[batch_indexes[i]] = l
+            losses.append(self.fit_to(batch_x[:i], batch_y[:i], batch_weights[:i], batch_masks[:i]))
 
         self.losses.append(sum(losses)/len(losses))
 

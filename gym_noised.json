@@ -3,8 +3,8 @@
     "competitor": "noised",
     "comp_params": {
       "strat": "twobound",
-      "strat_params": {"min_p": 1, "max_p": 50, "diff": 1},
-      "stddev": 2
+      "strat_params": {"min_p": 1000, "max_p": 10000, "diff": 100},
+      "stddev": 400
     }
   }
 }

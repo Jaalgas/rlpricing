@@ -1,0 +1,35 @@
+{
+  "gym_params": {
+    "min_p": 1000,
+    "max_p": 10000,
+    "step_size": 100,
+    "initial_price_a": 4000,
+    "initial_price_b": 4000,
+    "initial_reference_price": 4000,
+    "h": 0.5,
+    "w": 0.9,
+    "competitor": "fixed",
+    "comp_params": {
+      "p": 4000
+    },
+    "sim_params": {
+      "exchange_rate": 501.45,
+      "arrival_rate": 100,
+      "allow_no_purchase": true,
+      "upper_income": 1000000,
+      "speed_a": 0.01113875,
+      "speed_b": 0.01113875
+    }
+  },
+  "package_gb": 10,
+  "train_timesteps": 500000,
+  "eval_timesteps": 20000,
+  "num_experiments": 10,
+  "model_params": {
+    "gamma": 0.9
+  },
+  "ql_replay_capacity": 16384,
+  "sac_reward_scale": 1000,
+  "algorithms": ["ql", "sac"],
+  "seed": 42
+}

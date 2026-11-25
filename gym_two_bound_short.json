@@ -1,9 +1,9 @@
 {
   "gym_params": {
     "comp_params": {
-      "min_p": 25,
-      "max_p": 45,
-      "diff": 1
+      "min_p": 5000,
+      "max_p": 9000,
+      "diff": 100
     }
   }
 }
