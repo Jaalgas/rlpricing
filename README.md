@@ -56,6 +56,16 @@ Each completed run under `experiments/esim/{ql,sac}_vs_{fixed,twobound,cartel}/r
 - `train_history.jsonl` and `eval_history.jsonl` with one record per step, streamed to disk. They include prices, sales, non-purchases, arrivals, revenues, reward, reference price, and half-period accounting.
 - `trained_model.weights.h5` for Q-learning or `trained_model.zip` for SAC. To reload the Q-learning policy, instantiate the wrapper with the recorded model settings and discrete market, then call `load_weights`. SAC checkpoints use Stable Baselines' `SAC.load`.
 
+## Frozen Q-learning vs SAC duel
+
+`run_rl_duel.py` evaluates the saved Q-learning and SAC checkpoints against each other without calling either model's learning method. It uses the 30% own-revenue / 70% competitive-reward checkpoints from `experiments/revenue_30_own_70_comp_50k_10k_one_seed` by default. It evaluates both seating orders because A reprices before the first customer batch and B responds before the second. The default run is 10,000 periods per seating order:
+
+~~~sh
+python run_rl_duel.py --steps 10000 --output-dir experiments/ql_sac_duel_30_own_70_10k
+~~~
+
+The output contains each period's shared-market history and `duel_summary.csv` with revenues, rewards, customer counts, and the winner for both seating orders. Use `--ql-run` and `--sac-run` to point to other completed checkpoints trained with matching reward weights.
+
 ## Research outputs
 
 `run_analysis.py` uses completed evaluation histories. It writes `results/individual_runs.csv` and `results/evaluation_summary.csv`. The summary includes means, sample standard deviations, medians, Student's t 95% confidence intervals, win rates, and matched SAC-minus-Q-learning differences within each competitor strategy. The within-run A-minus-B revenue difference measures competitive performance. Undefined ratios and confidence intervals with fewer than two observations are blank.

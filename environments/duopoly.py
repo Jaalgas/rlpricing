@@ -72,12 +72,18 @@ class MarketEnv(gym.Env):
         return HalfPeriod(self.price_a, self.price_b, sales_a, sales_b, no_purchase,
                           sales_a * self.price_a, sales_b * self.price_b)
 
-    def step(self, action):
+    def step(self, action, provider_b_policy=None):
         self.price_a = self.decode_action(np.asarray(action).item())
         self.ref_p = update_ref(self.ref_p, self.price_a, self.w)
         first = self.sell(self.h)
 
-        response = self.competitor(self.ref_p, self.price_a)
+        if provider_b_policy is None:
+            response = self.competitor(self.ref_p, self.price_a)
+        else:
+            # The callback runs after first-half customers have arrived, so B
+            # responds to A's new price before the second-half customer batch.
+            observation_b = np.asarray([self.ref_p, self.price_a], dtype=np.float32)
+            response = provider_b_policy(observation_b)
         self.price_b = float(np.clip(response, self.min_p, self.max_p))
         self.ref_p = update_ref(self.ref_p, self.price_b, self.w)
         second = self.sell(1 - self.h)
@@ -91,6 +97,13 @@ class MarketEnv(gym.Env):
             reward = self.revenue_weight * revenue_a + self.competitive_weight * revenue_lead
         else:
             reward = revenue_a
+        if self.reward_mode == "revenue_lead":
+            reward_b = revenue_b - revenue_a
+        elif self.reward_mode == "revenue_mix":
+            reward_b = (self.revenue_weight * revenue_b
+                        + self.competitive_weight * (revenue_b - revenue_a))
+        else:
+            reward_b = revenue_b
         self.total_revenue_a += revenue_a
         self.total_revenue_b += revenue_b
         self.steps += 1
@@ -108,6 +121,8 @@ class MarketEnv(gym.Env):
             "revenue_a": revenue_a,
             "revenue_b": revenue_b,
             "reward": reward,
+            "reward_a": reward,
+            "reward_b": reward_b,
             "reference_price": self.ref_p,
             "first_half": first._asdict(),
             "second_half": second._asdict(),
