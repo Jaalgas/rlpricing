@@ -160,6 +160,10 @@ def main():
     parser.add_argument("--reward", choices=("revenue_mix", "own_revenue", "revenue_lead"),
                         default="revenue_mix",
                         help="Training objective. The default blends 70%% own revenue with 30%% revenue lead.")
+    parser.add_argument("--revenue-weight", type=float,
+                        help="Own-revenue weight for revenue_mix; weights must sum to one.")
+    parser.add_argument("--competitive-weight", type=float,
+                        help="Revenue-lead weight for revenue_mix; weights must sum to one.")
     parser.add_argument("--algorithm", choices=tuple(PRESETS))
     parser.add_argument("--competitor", choices=tuple(COMPETITORS))
     parser.add_argument("--train-steps", type=int)
@@ -171,9 +175,20 @@ def main():
     market = spec["gym_params"]
     market["reward_mode"] = args.reward
     if args.reward == "revenue_mix":
-        market["revenue_weight"] = 0.7
-        market["competitive_weight"] = 0.3
+        revenue_weight = args.revenue_weight
+        if revenue_weight is None:
+            revenue_weight = market.get("revenue_weight", 0.7)
+        competitive_weight = args.competitive_weight
+        if competitive_weight is None:
+            competitive_weight = market.get("competitive_weight", 0.3)
+        if (revenue_weight < 0 or competitive_weight < 0
+                or not np.isclose(revenue_weight + competitive_weight, 1.0)):
+            parser.error("Revenue and competitive weights must be nonnegative and sum to one.")
+        market["revenue_weight"] = revenue_weight
+        market["competitive_weight"] = competitive_weight
     else:
+        if args.revenue_weight is not None or args.competitive_weight is not None:
+            parser.error("Set reward weights only when --reward revenue_mix is selected.")
         market.pop("revenue_weight", None)
         market.pop("competitive_weight", None)
     if "competitors" not in spec:

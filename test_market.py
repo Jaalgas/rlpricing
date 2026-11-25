@@ -98,6 +98,16 @@ class MarketTests(unittest.TestCase):
             self.assertEqual((row["revenue_a"], row["revenue_b"]),
                              (base_row["revenue_a"], base_row["revenue_b"]))
 
+    def test_mixed_reward_can_prioritize_beating_the_competitor(self):
+        params = CONFIG["competitors"]["twobound"]
+        env = self.market(competitor="twobound", comp_params=params,
+                          reward_mode="revenue_mix", revenue_weight=0.3,
+                          competitive_weight=0.7)
+        env.reset(seed=73)
+        _, reward, _, row = env.step([0])
+        self.assertAlmostEqual(
+            reward, 0.3 * row["revenue_a"] + 0.7 * (row["revenue_a"] - row["revenue_b"]))
+
     def test_revenue_lead_uses_both_half_periods(self):
         params = CONFIG["competitors"]["twobound"]
         env = self.market(competitor="twobound", comp_params=params, reward_mode="revenue_lead")

@@ -44,7 +44,7 @@ Use `--config` to supply a different market configuration. Repeating a command w
 
 ## Market and evaluation
 
-By default, training uses a weighted reward: `0.7 * provider_A_revenue + 0.3 * (provider_A_revenue - provider_B_revenue)`. This gives 70% weight to revenue generation and 30% to beating the opponent. Evaluation still reports each provider's actual revenue and revenue difference in KZT. Use `--reward own_revenue` or `--reward revenue_lead` to compare the two component objectives separately. Each history row records the selected reward and each provider's actual revenue in KZT.
+By default, training uses a weighted reward: `0.7 * provider_A_revenue + 0.3 * (provider_A_revenue - provider_B_revenue)`. This gives 70% weight to revenue generation and 30% to beating the opponent. Set `--revenue-weight 0.3 --competitive-weight 0.7` to run a variant that emphasizes beating the opponent. Evaluation still reports each provider's actual revenue and revenue difference in KZT. Use `--reward own_revenue` or `--reward revenue_lead` to compare the two component objectives separately. Each history row records the selected reward and each provider's actual revenue in KZT.
 
 The market draws a fresh Poisson customer batch in each half-period. Both providers compete for each customer, who buys from A, buys from B, or declines. A reprices before the first customer batch. B keeps its previous price for that batch, then responds to A before the second batch. Each seller's price updates the reference price. Revenue sums price times sales at the price actually charged in each half-period. The two-element observation contains the reference price and the competitor price, and both algorithms scale observations using the configured price bounds.
 
