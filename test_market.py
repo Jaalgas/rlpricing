@@ -8,7 +8,8 @@ import numpy as np
 from customer_model import CustomerSimulator
 from environments.duopoly import MarketEnv
 from gymql.store import PrioritizedStore, SumTree
-from run_analysis import describe, evaluation_metrics
+from run_analysis import describe, evaluation_metrics, summarize
+from strategies import CartelTwoBound, TwoBound
 
 
 CONFIG = json.loads(Path(__file__).with_name("gym_esim.json").read_text(encoding="utf-8"))
@@ -52,7 +53,10 @@ class CustomerTests(unittest.TestCase):
 
 class MarketTests(unittest.TestCase):
     def market(self, mode="continuous", **options):
-        return MarketEnv(**dict(CONFIG["gym_params"], mode=mode, **options))
+        params = dict(CONFIG["gym_params"], mode=mode, competitor="fixed",
+                      comp_params=CONFIG["competitors"]["fixed"])
+        params.update(options)
+        return MarketEnv(**params)
 
     def test_shared_customers_and_revenue(self):
         env = self.market(h=0.25)
@@ -73,6 +77,45 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(row["revenue_b"], env.total_revenue_b)
         self.assertTrue(env.observation_space.contains(obs))
         self.assertFalse(done)
+
+    def test_reactive_prices_and_revenue_by_half(self):
+        for competitor, action, price_a, response in [
+            ("twobound", 0, 5500, 5400), ("twobound", -4500, 1000, 10000),
+            ("cartel", 1100, 6600, 6600), ("cartel", 0, 5500, 5400),
+        ]:
+            with self.subTest(competitor=competitor, action=action):
+                env = self.market(h=0.25, competitor=competitor,
+                                  comp_params=CONFIG["competitors"][competitor])
+                calls = []
+
+                def shared_batch(duration, a, b):
+                    calls.append((duration, a, b))
+                    return (3, 5, 7) if duration == 0.25 else (11, 13, 17)
+
+                env.sim = shared_batch
+                obs, reward, _, row = env.step([action])
+                self.assertEqual(calls, [(0.25, price_a, 4000), (0.75, price_a, response)])
+                self.assertEqual(row["first_half"]["price_b"], 4000)
+                self.assertEqual(row["second_half"]["price_b"], response)
+                self.assertEqual(row["revenue_b"], 5 * 4000 + 13 * response)
+                self.assertEqual(reward, 14 * price_a)
+                self.assertEqual(row["total_customers"], 56)
+                self.assertAlmostEqual(row["reference_price"],
+                                       0.9 * (0.9 * 4000 + 0.1 * price_a) + 0.1 * response)
+                self.assertEqual(obs[1], response)
+                env.step([action])
+                self.assertEqual(calls[2][2], response)
+                np.testing.assert_array_equal(env.reset(), [4000, 4000])
+
+    def test_historical_strategy_rules(self):
+        two_bound = TwoBound(2000, 6000, 100)
+        self.assertEqual(two_bound(4000, 2100), 2000)
+        self.assertEqual(two_bound(4000, 2099), 6000)
+        self.assertEqual(two_bound(4000, 10000), 9900)
+        self.assertEqual(TwoBound(2000, 6000, 100, True)(4000, 10000), 6000)
+        cartel = CartelTwoBound(1000, 10000, 100, 6600)
+        self.assertEqual(cartel(4000, 6600.4), 6600.4)
+        self.assertEqual(cartel(4000, 6600.6), 6500.6)
 
     def test_action_shapes_and_bounds(self):
         continuous = self.market()
@@ -126,8 +169,23 @@ class ReplayAndAnalysisTests(unittest.TestCase):
         store.update_weights(indices, [0.02])
         self.assertGreater(store.tree.root_priority, 0)
 
+    def test_matched_summaries_only_compare_the_same_competitor(self):
+        results = []
+        for strategy, revenue_a in (("fixed", 100), ("twobound", 200), ("cartel", 400)):
+            for algorithm, gain in (("ql", 0), ("sac", 20)):
+                config = dict(algorithm=algorithm, run=0, evaluation_seed=42, eval_timesteps=1,
+                              package_gb=10, gym_params=dict(competitor=strategy, mode=algorithm))
+                row = dict(revenue_a=revenue_a + gain, revenue_b=100, sales_a=1, sales_b=1,
+                           no_purchase=0, total_customers=2)
+                results.append((None, config, evaluation_metrics([row], config)))
+        paired = {row["comparison"]: row["mean"] for row in summarize(results)
+                  if row["comparison"].startswith("matched") and row["metric"] == "revenue_a"}
+        self.assertEqual(paired, {"matched_sac_minus_ql_vs_" + strategy: 20
+                                  for strategy in ("fixed", "twobound", "cartel")})
+
     def test_undefined_metrics_arent_filled(self):
-        config = dict(algorithm="ql", run=0, evaluation_seed=42, eval_timesteps=1)
+        config = dict(algorithm="ql", run=0, evaluation_seed=42, eval_timesteps=1,
+                      gym_params={"competitor": "fixed"})
         result = evaluation_metrics([], config)
         for field in ("revenue_advantage_pct", "market_share_a_pct", "market_share_b_pct",
                       "conversion_rate_pct", "average_price_a", "average_price_b"):

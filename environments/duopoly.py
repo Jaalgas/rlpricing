@@ -6,14 +6,14 @@ from gym import spaces
 
 from customer_model import CustomerSimulator
 from simtools import price_grid, update_ref
-from strategies import Fixed
+from strategies import COMPETITORS
 
 
-HalfPeriod = namedtuple("HalfPeriod", "sales_a sales_b no_purchase revenue_a revenue_b")
+HalfPeriod = namedtuple("HalfPeriod", "price_a price_b sales_a sales_b no_purchase revenue_a revenue_b")
 
 
 class MarketEnv(gym.Env):
-    """Two sellers with one learning agent and one fixed-price competitor."""
+    """Two sellers with one learning agent and one scripted competitor."""
 
     def __init__(self, min_p, max_p, competitor, comp_params, sim_params, h, w,
                  mode="continuous", *, step_size=100, initial_price_a=4000,
@@ -33,11 +33,14 @@ class MarketEnv(gym.Env):
         self.observation_space = spaces.Box(low=min_p, high=max_p,
                                            shape=(2,), dtype=np.float32)
 
-        if competitor != "fixed":
-            raise ValueError("The competitor must use fixed pricing")
-        self.competitor = Fixed(**comp_params)
-        if self.competitor.price != initial_price_b or not min_p <= initial_price_b <= max_p:
-            raise ValueError("The fixed competitor price must equal its opening price and be within bounds")
+        if competitor not in COMPETITORS:
+            raise ValueError("Unknown competitor strategy: {}".format(competitor))
+        self.competitor = COMPETITORS[competitor](**comp_params)
+        if not min_p <= initial_price_b <= max_p:
+            raise ValueError("The opening competitor price must be within bounds")
+        if competitor == "fixed" and self.competitor.price != initial_price_b:
+            raise ValueError("The fixed competitor price must equal its opening price")
+        self.initial_price_b = float(initial_price_b)
         self.initial_price_a = float(np.clip(initial_price_a, min_p, max_p))
         self.initial_reference_price = float(np.clip(initial_reference_price, min_p, max_p))
         self.h = h
@@ -57,7 +60,7 @@ class MarketEnv(gym.Env):
 
     def sell(self, duration):
         sales_a, sales_b, no_purchase = self.sim(duration, self.price_a, self.price_b)
-        return HalfPeriod(sales_a, sales_b, no_purchase,
+        return HalfPeriod(self.price_a, self.price_b, sales_a, sales_b, no_purchase,
                           sales_a * self.price_a, sales_b * self.price_b)
 
     def step(self, action):
@@ -65,6 +68,8 @@ class MarketEnv(gym.Env):
         self.ref_p = update_ref(self.ref_p, self.price_a, self.w)
         first = self.sell(self.h)
 
+        response = self.competitor(self.ref_p, self.price_a)
+        self.price_b = float(np.clip(response, self.min_p, self.max_p))
         self.ref_p = update_ref(self.ref_p, self.price_b, self.w)
         second = self.sell(1 - self.h)
 
@@ -97,7 +102,7 @@ class MarketEnv(gym.Env):
         if seed is not None:
             self.sim.rng = np.random.default_rng(seed)
         self.price_a = self.initial_price_a
-        self.price_b = self.competitor.price
+        self.price_b = self.initial_price_b
         self.ref_p = self.initial_reference_price
         self.steps = 0
         self.total_revenue_a = 0

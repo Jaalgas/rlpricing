@@ -8,8 +8,11 @@ import sys
 
 from scipy.stats import t
 
+from strategies import COMPETITORS
+
 
 ALGORITHMS = ("ql", "sac")
+MATCHUPS = tuple((algorithm, competitor) for competitor in COMPETITORS for algorithm in ALGORITHMS)
 METRICS = ("revenue_a", "revenue_b", "revenue_difference", "revenue_advantage_pct",
            "sales_a", "sales_b", "no_purchase", "total_customers",
            "market_share_a_pct", "market_share_b_pct", "conversion_rate_pct",
@@ -17,9 +20,13 @@ METRICS = ("revenue_a", "revenue_b", "revenue_difference", "revenue_advantage_pc
 TOTALS = ("revenue_a", "revenue_b", "sales_a", "sales_b", "no_purchase", "total_customers")
 
 
+def matchup_name(algorithm, competitor):
+    return algorithm + "_vs_" + competitor
+
+
 def completed_runs(root):
-    for algorithm in ALGORITHMS:
-        for folder in sorted((root / (algorithm + "_vs_fixed")).glob("run_*")):
+    for algorithm, competitor in MATCHUPS:
+        for folder in sorted((root / matchup_name(algorithm, competitor)).glob("run_*")):
             conf = folder / "conf.json"
             if not conf.is_file():
                 continue
@@ -27,6 +34,10 @@ def completed_runs(root):
             if config.get("status") == "completed":
                 if not (folder / "eval_history.jsonl").is_file():
                     print("Skipping {}: evaluation history is missing.".format(folder), file=sys.stderr)
+                    continue
+                if (config["algorithm"], config["gym_params"]["competitor"]) != (algorithm, competitor):
+                    print("Skipping {}: matchup does not match its configuration.".format(folder),
+                          file=sys.stderr)
                     continue
                 yield folder, config
 
@@ -55,7 +66,8 @@ def evaluation_metrics(rows, config):
     a, b = totals["revenue_a"], totals["revenue_b"]
     sold = totals["sales_a"] + totals["sales_b"]
     return dict(
-        algorithm=config["algorithm"], run=config["run"], evaluation_seed=config["evaluation_seed"],
+        algorithm=config["algorithm"], competitor=config["gym_params"]["competitor"],
+        run=config["run"], evaluation_seed=config["evaluation_seed"],
         eval_steps=config["eval_timesteps"], **totals, revenue_difference=a-b,
         revenue_advantage_pct=ratio(a-b, b, 100),
         market_share_a_pct=ratio(totals["sales_a"], sold, 100),
@@ -99,27 +111,34 @@ def pair_key(config):
 
 
 def summarize(results):
-    for algorithm in ALGORITHMS:
-        runs = [row for _, _, row in results if row["algorithm"] == algorithm]
+    for algorithm, competitor in MATCHUPS:
+        runs = [row for _, _, row in results
+                if (row["algorithm"], row["competitor"]) == (algorithm, competitor)]
         if not runs:
             continue
+        comparison = matchup_name(algorithm, competitor)
         for metric in METRICS:
             if metric == "win":
                 wins = [row["win"] for row in runs]
-                yield dict(comparison=algorithm + "_vs_fixed", metric="win_rate_pct",
+                yield dict(comparison=comparison, metric="win_rate_pct",
                            n=len(wins), mean=100 * mean(wins))
             else:
-                yield dict(comparison=algorithm + "_vs_fixed", metric=metric,
-                           **describe(row[metric] for row in runs))
+                yield dict(comparison=comparison, metric=metric, **describe(row[metric] for row in runs))
 
-    ql = {pair_key(conf): row for _, conf, row in results if conf["algorithm"] == "ql"}
-    sac = {pair_key(conf): row for _, conf, row in results if conf["algorithm"] == "sac"}
-    pairs = [(sac[key], ql[key]) for key in sorted(sac.keys() & ql.keys())]
-    if pairs:
-        for metric in ("revenue_a", "revenue_difference", "revenue_advantage_pct"):
-            differences = (left[metric] - right[metric] for left, right in pairs
-                           if left[metric] is not None and right[metric] is not None)
-            yield dict(comparison="matched_sac_minus_ql", metric=metric, **describe(differences))
+    for competitor in COMPETITORS:
+        by_algorithm = {
+            algorithm: {pair_key(conf): row for _, conf, row in results
+                        if (row["algorithm"], row["competitor"]) == (algorithm, competitor)}
+            for algorithm in ALGORITHMS
+        }
+        ql, sac = by_algorithm["ql"], by_algorithm["sac"]
+        pairs = [(sac[key], ql[key]) for key in sorted(sac.keys() & ql.keys())]
+        if pairs:
+            for metric in ("revenue_a", "revenue_difference", "revenue_advantage_pct"):
+                differences = (left[metric] - right[metric] for left, right in pairs
+                               if left[metric] is not None and right[metric] is not None)
+                yield dict(comparison="matched_sac_minus_ql_vs_" + competitor, metric=metric,
+                           **describe(differences))
 
 
 def write_csv(path, fields, rows):
@@ -139,7 +158,7 @@ def main():
         parser.error("No completed evaluation runs found in {}".format(args.input_dir))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_csv(args.output_dir / "individual_runs.csv",
-              ("algorithm", "run", "evaluation_seed", "eval_steps") + METRICS,
+              ("algorithm", "competitor", "run", "evaluation_seed", "eval_steps") + METRICS,
               (row for _, _, row in results))
     write_csv(args.output_dir / "evaluation_summary.csv",
               ("comparison", "metric", "n", "mean", "sd", "median", "ci95_low", "ci95_high"),

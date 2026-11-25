@@ -1,4 +1,4 @@
-"""Run the two fixed-competitor eSIM experiments."""
+"""Run Q-learning and SAC against scripted eSIM competitors."""
 import argparse
 import json
 from pathlib import Path
@@ -14,6 +14,7 @@ from stable_baselines.sac import MlpPolicy
 from environments.duopoly import MarketEnv
 from gymql.strategy import QLModel
 from simtools import update
+from strategies import COMPETITORS
 
 
 ROOT = Path(__file__).resolve().parent
@@ -51,7 +52,7 @@ def read_config(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def run_config(spec, algorithm, index, smoke):
+def run_config(spec, algorithm, competitor, index, smoke):
     params = read_config(ROOT / PRESETS[algorithm])["model_params"]
     update(params, spec["model_params"])
     if algorithm == "ql":
@@ -66,7 +67,8 @@ def run_config(spec, algorithm, index, smoke):
     # Match customer seeds across algorithms. Model seeds are independent of both phases.
     seed_states = np.random.SeedSequence([spec["seed"], index]).generate_state(3)
     model_seed, training_seed, evaluation_seed = map(int, seed_states)
-    market = dict(spec["gym_params"], mode="discrete" if algorithm == "ql" else "continuous")
+    market = dict(spec["gym_params"], mode="discrete" if algorithm == "ql" else "continuous",
+                  competitor=competitor, comp_params=spec["competitors"][competitor])
     return dict(algorithm=algorithm, run=index, package_gb=spec["package_gb"],
                 gym_params=market, model_params=params, model_seed=model_seed,
                 training_seed=training_seed, evaluation_seed=evaluation_seed,
@@ -156,6 +158,7 @@ def main():
     parser.add_argument("--config", type=Path, default=ROOT / "gym_esim.json")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--algorithm", choices=tuple(PRESETS))
+    parser.add_argument("--competitor", choices=tuple(COMPETITORS))
     parser.add_argument("--train-steps", type=int)
     parser.add_argument("--eval-steps", type=int)
     parser.add_argument("--runs", type=int)
@@ -163,11 +166,17 @@ def main():
     args = parser.parse_args()
     spec = read_config(args.config)
     market = spec["gym_params"]
-    if spec["algorithms"] != ["ql", "sac"] or market["competitor"] != "fixed":
-        parser.error("This pipeline supports Q-learning and SAC against fixed pricing.")
-    fixed = market["comp_params"]["p"]
-    if fixed != market["initial_price_b"] or not market["min_p"] <= fixed <= market["max_p"]:
-        parser.error("The fixed competitor price must match its opening price and be within market bounds.")
+    if "competitors" not in spec:
+        spec["competitors"] = {market.pop("competitor"): market.pop("comp_params")}
+    opponents = spec["competitors"]
+    if not opponents or opponents.keys() - COMPETITORS.keys():
+        parser.error("Configure one or more of: {}".format(", ".join(COMPETITORS)))
+    if args.competitor and args.competitor not in opponents:
+        parser.error("The selected competitor is missing from the configuration.")
+    if not spec["algorithms"] or any(algorithm not in PRESETS for algorithm in spec["algorithms"]):
+        parser.error("The only supported algorithms are Q-learning and SAC.")
+    if args.algorithm and args.algorithm not in spec["algorithms"]:
+        parser.error("The selected algorithm is missing from the configuration.")
     if args.smoke_test:
         spec.update(train_timesteps=160, eval_timesteps=20, num_experiments=1)
     for flag, key in (("train_steps", "train_timesteps"), ("eval_steps", "eval_timesteps"),
@@ -181,10 +190,12 @@ def main():
         parser.error("Replay capacity and reward scale must be positive.")
     root = args.output_dir or Path("experiments/esim_smoke" if args.smoke_test else "experiments/esim")
     algorithms = [args.algorithm] if args.algorithm else spec["algorithms"]
-    for algorithm in algorithms:
-        for index in range(spec["num_experiments"]):
-            execute_run(root / (algorithm + "_vs_fixed") / "run_{:02d}".format(index),
-                        run_config(spec, algorithm, index, args.smoke_test))
+    competitors = [args.competitor] if args.competitor else opponents
+    for competitor in competitors:
+        for algorithm in algorithms:
+            for index in range(spec["num_experiments"]):
+                execute_run(root / (algorithm + "_vs_" + competitor) / "run_{:02d}".format(index),
+                            run_config(spec, algorithm, competitor, index, args.smoke_test))
 
 
 if __name__ == "__main__":
