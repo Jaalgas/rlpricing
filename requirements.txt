@@ -1,0 +1,14 @@
+# Legacy training environment for 64-bit CPython 3.7.
+gym==0.17.3
+stable-baselines==2.10.2
+tensorflow==1.15.0
+keras==2.2.4
+tflearn==0.3.2
+numpy==1.18.5
+matplotlib==3.3.4
+psutil==5.9.8
+mpi4py==3.1.6
+
+# Keep legacy Keras and TensorFlow compatible with their serialization libraries.
+h5py==2.10.0
+protobuf==3.20.3
