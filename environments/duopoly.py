@@ -17,7 +17,16 @@ class MarketEnv(gym.Env):
 
     def __init__(self, min_p, max_p, competitor, comp_params, sim_params, h, w,
                  mode="continuous", *, step_size=100, initial_price_a=4000,
-                 initial_price_b=4000, initial_reference_price=4000):
+                 initial_price_b=4000, initial_reference_price=4000,
+                 reward_mode="own_revenue", revenue_weight=0.7, competitive_weight=0.3):
+        if reward_mode not in ("own_revenue", "revenue_lead", "revenue_mix"):
+            raise ValueError("Unknown reward mode: {}".format(reward_mode))
+        if revenue_weight < 0 or competitive_weight < 0 or not np.isclose(
+                revenue_weight + competitive_weight, 1.0):
+            raise ValueError("Revenue reward weights must be nonnegative and sum to one")
+        self.reward_mode = reward_mode
+        self.revenue_weight = revenue_weight
+        self.competitive_weight = competitive_weight
         self.min_p = min_p
         self.max_p = max_p
         self.mode = mode
@@ -75,6 +84,13 @@ class MarketEnv(gym.Env):
 
         revenue_a = first.revenue_a + second.revenue_a
         revenue_b = first.revenue_b + second.revenue_b
+        if self.reward_mode == "revenue_lead":
+            reward = revenue_a - revenue_b
+        elif self.reward_mode == "revenue_mix":
+            revenue_lead = revenue_a - revenue_b
+            reward = self.revenue_weight * revenue_a + self.competitive_weight * revenue_lead
+        else:
+            reward = revenue_a
         self.total_revenue_a += revenue_a
         self.total_revenue_b += revenue_b
         self.steps += 1
@@ -91,12 +107,12 @@ class MarketEnv(gym.Env):
             "total_customers": sales_a + sales_b + no_purchase,
             "revenue_a": revenue_a,
             "revenue_b": revenue_b,
-            "reward": revenue_a,
+            "reward": reward,
             "reference_price": self.ref_p,
             "first_half": first._asdict(),
             "second_half": second._asdict(),
         }
-        return self.observe(), revenue_a, False, info
+        return self.observe(), reward, False, info
 
     def reset(self, seed=None):
         if seed is not None:

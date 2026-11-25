@@ -24,7 +24,7 @@ python run_analysis.py
 python plot_results.py
 ~~~
 
-The defaults in `gym_esim.json` are ten independent runs per matchup, 500,000 training steps and 20,000 evaluation steps per run. Prices range from 1,000 to 10,000 KZT. Q-learning uses a 91-point price grid and the Double, dueling, and prioritized replay settings from `gym_ql_nice.json`. SAC uses continuous actions and the network and exploration settings in `gym_sac.json`. Provider B opens at 4,000 KZT. Choose a competitor with `--competitor fixed`, `--competitor twobound`, or `--competitor cartel`. Omitting the flag runs every configured competitor.
+The defaults in `gym_esim.json` are five independent runs per matchup, 50,000 training steps and 10,000 evaluation steps per run. Prices range from 1,000 to 10,000 KZT. Q-learning uses a 91-point price grid and the Double, dueling, and prioritized replay settings from `gym_ql_nice.json`. SAC uses continuous actions and the network and exploration settings in `gym_sac.json`. Provider B opens at 4,000 KZT. Choose a competitor with `--competitor fixed`, `--competitor twobound`, or `--competitor cartel`. Omitting the flag runs every configured competitor.
 
 - **Fixed** charges 4,000 KZT in both half-periods.
 - **TwoBound** undercuts A by 100 KZT. If the target falls below its lower bound of 1,000 KZT, it switches to its upper bound of 10,000 KZT.
@@ -43,6 +43,8 @@ python plot_results.py --input-dir experiments/esim_pilot --output-dir results/e
 Use `--config` to supply a different market configuration. Repeating a command with the same output directory and settings skips completed runs and restarts incomplete runs from the beginning. Use a different output directory for changed settings. Q-learning's configured replay capacity is 16,384. Shortened runs at or below that horizon use half the training horizon as capacity, with a minimum of one. Smoke runs use capacity 16 and sample size 33 to exercise a partial minibatch. The runner reports and records the effective settings.
 
 ## Market and evaluation
+
+By default, training uses a weighted reward: `0.7 * provider_A_revenue + 0.3 * (provider_A_revenue - provider_B_revenue)`. This gives 70% weight to revenue generation and 30% to beating the opponent. Evaluation still reports each provider's actual revenue and revenue difference in KZT. Use `--reward own_revenue` or `--reward revenue_lead` to compare the two component objectives separately. Each history row records the selected reward and each provider's actual revenue in KZT.
 
 The market draws a fresh Poisson customer batch in each half-period. Both providers compete for each customer, who buys from A, buys from B, or declines. A reprices before the first customer batch. B keeps its previous price for that batch, then responds to A before the second batch. Each seller's price updates the reference price. Revenue sums price times sales at the price actually charged in each half-period. The two-element observation contains the reference price and the competitor price, and both algorithms scale observations using the configured price bounds.
 

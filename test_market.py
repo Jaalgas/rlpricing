@@ -54,6 +54,7 @@ class CustomerTests(unittest.TestCase):
 class MarketTests(unittest.TestCase):
     def market(self, mode="continuous", **options):
         params = dict(CONFIG["gym_params"], mode=mode, competitor="fixed",
+                      reward_mode="own_revenue",
                       comp_params=CONFIG["competitors"]["fixed"])
         params.update(options)
         return MarketEnv(**params)
@@ -77,6 +78,39 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(row["revenue_b"], env.total_revenue_b)
         self.assertTrue(env.observation_space.contains(obs))
         self.assertFalse(done)
+
+    def test_mixed_reward_weights_revenue_and_competitive_lead(self):
+        params = CONFIG["competitors"]["twobound"]
+        mixed = self.market(competitor="twobound", comp_params=params,
+                            reward_mode="revenue_mix", revenue_weight=0.7,
+                            competitive_weight=0.3)
+        baseline = self.market(competitor="twobound", comp_params=params)
+        mixed.reset(seed=73)
+        baseline.reset(seed=73)
+        for action in ([0], [-4500], [4500]):
+            observation, reward, _, row = mixed.step(action)
+            base_observation, base_reward, _, base_row = baseline.step(action)
+            np.testing.assert_array_equal(observation, base_observation)
+            self.assertEqual(base_reward, base_row["revenue_a"])
+            self.assertEqual(row["reward"], reward)
+            self.assertAlmostEqual(
+                reward, 0.7 * row["revenue_a"] + 0.3 * (row["revenue_a"] - row["revenue_b"]))
+            self.assertEqual((row["revenue_a"], row["revenue_b"]),
+                             (base_row["revenue_a"], base_row["revenue_b"]))
+
+    def test_revenue_lead_uses_both_half_periods(self):
+        params = CONFIG["competitors"]["twobound"]
+        env = self.market(competitor="twobound", comp_params=params, reward_mode="revenue_lead")
+        baseline = self.market(competitor="twobound", comp_params=params)
+        env.reset(seed=42)
+        baseline.reset(seed=42)
+        for action in ([0], [-4500], [4500]):
+            obs, reward, _, row = env.step(action)
+            base_obs, base_reward, _, base_row = baseline.step(action)
+            np.testing.assert_array_equal(obs, base_obs)
+            self.assertEqual(row["reward"], reward)
+            self.assertEqual(reward, row["revenue_a"] - row["revenue_b"])
+            self.assertEqual(dict(row, reward=base_reward), base_row)
 
     def test_reactive_prices_and_revenue_by_half(self):
         for competitor, action, price_a, response in [

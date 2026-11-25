@@ -67,6 +67,9 @@ def evaluation_metrics(rows, config):
     sold = totals["sales_a"] + totals["sales_b"]
     return dict(
         algorithm=config["algorithm"], competitor=config["gym_params"]["competitor"],
+        reward_mode=config["gym_params"].get("reward_mode", "own_revenue"),
+        revenue_weight=config["gym_params"].get("revenue_weight"),
+        competitive_weight=config["gym_params"].get("competitive_weight"),
         run=config["run"], evaluation_seed=config["evaluation_seed"],
         eval_steps=config["eval_timesteps"], **totals, revenue_difference=a-b,
         revenue_advantage_pct=ratio(a-b, b, 100),
@@ -158,7 +161,8 @@ def main():
         parser.error("No completed evaluation runs found in {}".format(args.input_dir))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_csv(args.output_dir / "individual_runs.csv",
-              ("algorithm", "competitor", "run", "evaluation_seed", "eval_steps") + METRICS,
+              ("algorithm", "competitor", "reward_mode", "revenue_weight",
+               "competitive_weight", "run", "evaluation_seed", "eval_steps") + METRICS,
               (row for _, _, row in results))
     write_csv(args.output_dir / "evaluation_summary.csv",
               ("comparison", "metric", "n", "mean", "sd", "median", "ci95_low", "ci95_high"),

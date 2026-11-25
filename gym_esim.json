@@ -15,22 +15,39 @@
       "upper_income": 1000000,
       "speed_a": 0.01113875,
       "speed_b": 0.01113875
-    }
+    },
+    "reward_mode": "revenue_mix",
+    "revenue_weight": 0.7,
+    "competitive_weight": 0.3
   },
   "package_gb": 10,
-  "train_timesteps": 500000,
-  "eval_timesteps": 20000,
-  "num_experiments": 10,
+  "train_timesteps": 50000,
+  "eval_timesteps": 10000,
+  "num_experiments": 5,
   "model_params": {
     "gamma": 0.9
   },
   "ql_replay_capacity": 16384,
   "sac_reward_scale": 1000,
-  "algorithms": ["ql", "sac"],
+  "algorithms": [
+    "ql",
+    "sac"
+  ],
   "competitors": {
-    "fixed": {"p": 4000},
-    "twobound": {"min_p": 1000, "max_p": 10000, "diff": 100},
-    "cartel": {"min_p": 1000, "max_p": 10000, "diff": 100, "cartel_p": 6600}
+    "fixed": {
+      "p": 4000
+    },
+    "twobound": {
+      "min_p": 1000,
+      "max_p": 10000,
+      "diff": 100
+    },
+    "cartel": {
+      "min_p": 1000,
+      "max_p": 10000,
+      "diff": 100,
+      "cartel_p": 6600
+    }
   },
   "seed": 42
 }

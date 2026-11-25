@@ -43,9 +43,9 @@ class RecordedMarket(gym.Wrapper):
         return self.observation(self.env.reset(**kwargs))
 
     def step(self, action):
-        obs, revenue, done, record = self.env.step(action)
+        obs, reward, done, record = self.env.step(action)
         self.history.write(json.dumps(record, separators=(",", ":"), allow_nan=False) + "\n")
-        return self.observation(obs), revenue / self.reward_scale, done, record
+        return self.observation(obs), reward / self.reward_scale, done, record
 
 
 def read_config(path):
@@ -157,6 +157,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=ROOT / "gym_esim.json")
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--reward", choices=("revenue_mix", "own_revenue", "revenue_lead"),
+                        default="revenue_mix",
+                        help="Training objective. The default blends 70%% own revenue with 30%% revenue lead.")
     parser.add_argument("--algorithm", choices=tuple(PRESETS))
     parser.add_argument("--competitor", choices=tuple(COMPETITORS))
     parser.add_argument("--train-steps", type=int)
@@ -166,6 +169,13 @@ def main():
     args = parser.parse_args()
     spec = read_config(args.config)
     market = spec["gym_params"]
+    market["reward_mode"] = args.reward
+    if args.reward == "revenue_mix":
+        market["revenue_weight"] = 0.7
+        market["competitive_weight"] = 0.3
+    else:
+        market.pop("revenue_weight", None)
+        market.pop("competitive_weight", None)
     if "competitors" not in spec:
         spec["competitors"] = {market.pop("competitor"): market.pop("comp_params")}
     opponents = spec["competitors"]
@@ -188,7 +198,12 @@ def main():
             parser.error("{} must be positive".format(key))
     if spec["ql_replay_capacity"] < 1 or spec["sac_reward_scale"] <= 0:
         parser.error("Replay capacity and reward scale must be positive.")
-    root = args.output_dir or Path("experiments/esim_smoke" if args.smoke_test else "experiments/esim")
+    default_folder = "esim_smoke" if args.smoke_test else "esim"
+    if market.get("reward_mode") == "revenue_mix":
+        default_folder += "_revenue_mix"
+    elif market.get("reward_mode") == "revenue_lead":
+        default_folder += "_revenue_lead"
+    root = args.output_dir or Path("experiments") / default_folder
     algorithms = [args.algorithm] if args.algorithm else spec["algorithms"]
     competitors = [args.competitor] if args.competitor else opponents
     for competitor in competitors:
